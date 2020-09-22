@@ -42,6 +42,7 @@ class RepPointsV2Head(AnchorFreeHead):
                  gradient_mul=0.1,
                  point_strides=[8, 16, 32, 64, 128],
                  point_base_scale=4,
+                 corner_refine=True,
                  loss_cls=dict(
                      type='FocalLoss',
                      use_sigmoid=True,
@@ -73,6 +74,7 @@ class RepPointsV2Head(AnchorFreeHead):
         self.first_kernel_size = first_kernel_size
         self.kernel_size = kernel_size
         self.corner_dim = corner_dim
+        self.corner_refine = corner_refine
 
         # we use deformable conv to extract points features
         self.dcn_kernel = int(np.sqrt(num_points))
@@ -721,13 +723,13 @@ class RepPointsV2Head(AnchorFreeHead):
         labels = labels.reshape(-1)
         label_weights = label_weights.reshape(-1)
         cls_score = cls_score.permute(0, 2, 3, 1).reshape(-1, self.cls_out_channels)
-        loss_cls = self.loss_cls(
-            cls_score, labels, label_weights, avg_factor=num_total_samples_refine)
+
 
         # points loss
         bbox_gt_init = bbox_gt_init.reshape(-1, 4)
         bbox_weights_init = bbox_weights_init.reshape(-1, 4)
         bbox_pred_init = self.points2bbox(pts_pred_init.reshape(-1, 2 * self.num_points), y_first=False)
+        
         bbox_gt_refine = bbox_gt_refine.reshape(-1, 4)
         bbox_weights_refine = bbox_weights_refine.reshape(-1, 4)
         bbox_pred_refine = self.points2bbox(pts_pred_refine.reshape(-1, 2 * self.num_points), y_first=False)
@@ -742,7 +744,12 @@ class RepPointsV2Head(AnchorFreeHead):
             bbox_gt_refine / normalize_term,
             bbox_weights_refine,
             avg_factor=num_total_samples_refine)
-
+        #cls loss
+        if hasattr(self.loss_cls,'requires_box') :
+            loss_cls = self.loss_cls(cls_score,labels, label_weights, bbox_pred_refine,bbox_gt_refine,bbox_weights_refine,background_label=self.background_label,avg_factor=num_total_samples_refine)
+        else:
+            loss_cls = self.loss_cls(
+                cls_score, labels, label_weights, avg_factor=num_total_samples_refine)
         # heatmap cls loss
         hm_score = hm_score.permute(0, 2, 3, 1).reshape(-1, 2)
         hm_score_tl, hm_score_br = torch.chunk(hm_score, 2, dim=-1)
@@ -803,6 +810,7 @@ class RepPointsV2Head(AnchorFreeHead):
         label_channels = self.cls_out_channels
 
         # target for initial stage
+        # stride affect
         center_list, valid_flag_list = self.get_points(featmap_sizes, img_metas)
         pts_coordinate_preds_init = self.offset_to_pts(center_list, pts_preds_init)
         if self.train_cfg.init.assigner['type'] != 'MaxIoUAssigner':
@@ -826,6 +834,7 @@ class RepPointsV2Head(AnchorFreeHead):
          num_total_pos_init, num_total_neg_init) = cls_reg_targets_init
 
         # target for heatmap in initial stage
+        # stride affect
         proposal_list, valid_flag_list = self.get_points(featmap_sizes, img_metas)
         heatmap_targets = self.get_hm_targets(
             proposal_list,
@@ -838,16 +847,17 @@ class RepPointsV2Head(AnchorFreeHead):
          num_total_pos_tl, num_total_neg_tl, num_total_pos_br, num_total_neg_br) = heatmap_targets
 
         # target for refinement stage
-        center_list, valid_flag_list = self.get_points(featmap_sizes, img_metas)
+        center_list, valid_flag_list = self.get_points(featmap_sizes, img_metas) #[x,y,stride]
         pts_coordinate_preds_refine = self.offset_to_pts(center_list, pts_preds_refine)
         bbox_list = []
+        
         for i_img, center in enumerate(center_list):
             bbox = []
             for i_lvl in range(len(pts_preds_refine)):
                 bbox_preds_init = self.points2bbox(
                     pts_preds_init[i_lvl].detach())
                 bbox_shift = bbox_preds_init * self.point_strides[i_lvl]
-                bbox_center = torch.cat([center[i_lvl][:, :2], center[i_lvl][:, :2]], dim=1)
+                bbox_center = torch.cat([center[i_lvl][:, :2], center[i_lvl][:, :2]], dim=1) # no stride
                 bbox.append(bbox_center + bbox_shift[i_img].permute(1, 2, 0).reshape(-1, 4))
             bbox_list.append(bbox)
         cls_reg_targets_refine = self.get_targets(
@@ -1024,20 +1034,20 @@ class RepPointsV2Head(AnchorFreeHead):
             y1 = bboxes[:, 1].clamp(min=0, max=img_shape[0])
             x2 = bboxes[:, 2].clamp(min=0, max=img_shape[1])
             y2 = bboxes[:, 3].clamp(min=0, max=img_shape[0])
+            if self.corner_refine:
+                if i_lvl > 0:
+                    i = 0 if i_lvl in (1, 2) else 1
 
-            if i_lvl > 0:
-                i = 0 if i_lvl in (1, 2) else 1
+                    x1_new, y1_new, score1_new = select(hm_scores[i][0, ...], x1, y1, 2, i)
+                    x2_new, y2_new, score2_new = select(hm_scores[i][1, ...], x2, y2, 2, i)
 
-                x1_new, y1_new, score1_new = select(hm_scores[i][0, ...], x1, y1, 2, i)
-                x2_new, y2_new, score2_new = select(hm_scores[i][1, ...], x2, y2, 2, i)
+                    hm_offset = hm_offsets[i].permute(1, 2, 0)
+                    point_stride = self.point_strides[i]
 
-                hm_offset = hm_offsets[i].permute(1, 2, 0)
-                point_stride = self.point_strides[i]
-
-                x1 = ((x1_new + hm_offset[y1_new.to(torch.long), x1_new.to(torch.long), 0]) * point_stride).clamp(min=0, max=img_shape[1])
-                y1 = ((y1_new + hm_offset[y1_new.to(torch.long), x1_new.to(torch.long), 1]) * point_stride).clamp(min=0, max=img_shape[0])
-                x2 = ((x2_new + hm_offset[y2_new.to(torch.long), x2_new.to(torch.long), 2]) * point_stride).clamp(min=0, max=img_shape[1])
-                y2 = ((y2_new + hm_offset[y2_new.to(torch.long), x2_new.to(torch.long), 3]) * point_stride).clamp(min=0, max=img_shape[0])
+                    x1 = ((x1_new + hm_offset[y1_new.to(torch.long), x1_new.to(torch.long), 0]) * point_stride).clamp(min=0, max=img_shape[1])
+                    y1 = ((y1_new + hm_offset[y1_new.to(torch.long), x1_new.to(torch.long), 1]) * point_stride).clamp(min=0, max=img_shape[0])
+                    x2 = ((x2_new + hm_offset[y2_new.to(torch.long), x2_new.to(torch.long), 2]) * point_stride).clamp(min=0, max=img_shape[1])
+                    y2 = ((y2_new + hm_offset[y2_new.to(torch.long), x2_new.to(torch.long), 3]) * point_stride).clamp(min=0, max=img_shape[0])
             bboxes = torch.stack([x1, y1, x2, y2], dim=-1)
             mlvl_bboxes.append(bboxes)
             mlvl_scores.append(scores)
