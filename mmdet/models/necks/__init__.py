@@ -1,4 +1,5 @@
 from .bfp import BFP
+from .bifpn import BiFPN
 from .fpn import FPN
 from .fpn_carafe import FPN_CARAFE
 from .hrfpn import HRFPN
@@ -8,6 +9,6 @@ from .pafpn import PAFPN
 from .rfp import RFP
 
 __all__ = [
-    'FPN', 'BFP', 'HRFPN', 'NASFPN', 'FPN_CARAFE', 'PAFPN', 'NASFCOS_FPN',
+    'FPN', 'BFP', 'BiFPN', 'HRFPN', 'NASFPN', 'FPN_CARAFE', 'PAFPN', 'NASFCOS_FPN',
     'RFP'
 ]

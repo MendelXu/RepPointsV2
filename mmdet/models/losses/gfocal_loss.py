@@ -1,12 +1,15 @@
+import torch 
 import torch.nn as nn
 import torch.nn.functional as F
 
 from ..builder import LOSSES
 from .utils import weighted_loss
 
+from mmdet.core import bbox_overlaps
+
 
 @weighted_loss
-def quality_focal_loss(pred, target, beta=2.0):
+def quality_focal_loss(pred, target, beta=2.0,background_label=0,reduction='mean',avg_factor=None):
     """Quality Focal Loss (QFL) is from
     Generalized Focal Loss: Learning Qualified and Distributed Bounding Boxes
     for Dense Object Detection
@@ -37,8 +40,7 @@ def quality_focal_loss(pred, target, beta=2.0):
         pred, zerolabel, reduction='none') * scale_factor.pow(beta)
 
     # FG cat_id: [0, num_classes -1], BG cat_id: num_classes
-    bg_class_ind = pred.size(1)
-    pos = ((label >= 0) & (label < bg_class_ind)).nonzero().squeeze(1)
+    pos = (label!=background_label).nonzero().squeeze(1)
     pos_label = label[pos].long()
     # positives are supervised by bbox quality (IoU) score
     scale_factor = score[pos] - pred_sigmoid[pos, pos_label]
@@ -103,11 +105,15 @@ class QualityFocalLoss(nn.Module):
         self.beta = beta
         self.reduction = reduction
         self.loss_weight = loss_weight
-
+        self.requires_box=True
     def forward(self,
                 pred,
                 target,
                 weight=None,
+                bbox_pred=None,
+                bbox_target=None,
+                bbox_weight=None,
+                background_label=0,
                 avg_factor=None,
                 reduction_override=None):
         """Forward function
@@ -126,15 +132,33 @@ class QualityFocalLoss(nn.Module):
                 override the original reduction method of the loss.
                 Defaults to None.
         """
+        #print(pred.size(),target.size(),bbox_pred.size(),bbox_target.size(),bbox_weight.size())
+        #compute iou score
+        iou_score = bbox_target.new_zeros(target.size()).squeeze()
+        pos_inds = (target!=background_label).nonzero().squeeze(1)
+        # print(background_label)
+        # print(pos_inds)
+        # print(target.size(),background_label)
+        # print(((target >= 0)
+        #             & (target < background_label)).nonzero().squeeze(1))
+        
+        if len(pos_inds)>0:
+            score=bbox_overlaps(bbox_pred[pos_inds],bbox_target[pos_inds],is_aligned=True)
+            #print(score)
+            iou_score[pos_inds]=score.detach()
+        iou_score = iou_score.detach()
+
         assert reduction_override in (None, 'none', 'mean', 'sum')
         reduction = (
             reduction_override if reduction_override else self.reduction)
+
         if self.use_sigmoid:
             loss_cls = self.loss_weight * quality_focal_loss(
                 pred,
-                target,
-                weight,
+                (target,iou_score),
                 beta=self.beta,
+                background_label=background_label,
+                weight=weight,
                 reduction=reduction,
                 avg_factor=avg_factor)
         else:
@@ -185,5 +209,8 @@ class DistributionFocalLoss(nn.Module):
         reduction = (
             reduction_override if reduction_override else self.reduction)
         loss_cls = self.loss_weight * distribution_focal_loss(
-            pred, target, weight, reduction=reduction, avg_factor=avg_factor)
+            pred, target)
         return loss_cls
+
+
+
