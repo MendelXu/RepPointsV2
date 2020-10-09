@@ -15,6 +15,7 @@ from .nasfcos_head import NASFCOSHead
 from .pisa_retinanet_head import PISARetinaHead
 from .pisa_ssd_head import PISASSDHead
 from .reppoints_head import RepPointsHead
+from .reppoints_not_share_head import RepPointsNShareHead
 from .reppoints_v2_head import RepPointsV2Head
 from .reppoints_v2_not_share_head import RepPointsV2NShareHead
 from .retina_head import RetinaHead
@@ -28,5 +29,5 @@ __all__ = [
     'SSDHead', 'FCOSHead', 'RepPointsHead', 'FoveaHead',
     'FreeAnchorRetinaHead', 'ATSSHead', 'FSAFHead', 'NASFCOSHead',
     'PISARetinaHead', 'PISASSDHead', 'GFLHead', 'RepPointsV2Head',
-    'DenseRepPointsHead', 'DenseRepPointsV2Head','RepPointsV2NShareHead'
+    'DenseRepPointsHead', 'DenseRepPointsV2Head', 'RepPointsV2NShareHead', 'RepPointsNShareHead'
 ]

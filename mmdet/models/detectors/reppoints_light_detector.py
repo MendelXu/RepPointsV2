@@ -4,11 +4,10 @@ import torch
 
 from mmdet.core import bbox2result, bbox_mapping_back, multiclass_nms
 from ..builder import DETECTORS
-from .reppoints_v2_detector import RepPointsV2Detector
-
+from .reppoints_detector import RepPointsDetector
 
 @DETECTORS.register_module()
-class RepPointsV2LightDetector(RepPointsV2Detector):
+class RepPointsLightDetector(RepPointsDetector):
 
     def __init__(self,
                  backbone,
@@ -17,7 +16,7 @@ class RepPointsV2LightDetector(RepPointsV2Detector):
                  train_cfg=None,
                  test_cfg=None,
                  pretrained=None):
-        super(RepPointsV2LightDetector, self).__init__(backbone, neck, bbox_head, train_cfg,
+        super(RepPointsLightDetector, self).__init__(backbone, neck, bbox_head, train_cfg,
                                                        test_cfg, pretrained)
 
     def extract_feat(self, img):

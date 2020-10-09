@@ -1,4 +1,4 @@
-_base_ = './reppoints_v2_light_head_c2_2conv1x1_1x_coco.py'
+_base_ = './reppoints_v1_light_head_c2_2conv1x1_1x_coco.py'
 norm_cfg = dict(type='GN', num_groups=32, requires_grad=True)
 model = dict(
     neck=dict(
